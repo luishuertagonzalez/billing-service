@@ -5,6 +5,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -56,21 +58,42 @@ func (h *Handler) Webhook(c *gin.Context) {
 	// Restore body for ShouldBindJSON
 	c.Request.Body = io.NopCloser(bytes.NewReader(rawBody))
 
-	// HMAC-SHA256 signature verification (skip in dev mode when secret is empty)
+	// Fix 7: Mercado Pago manifest-based HMAC-SHA256 signature verification.
+	// x-signature format: "ts=<unix>,v1=<hex>"
+	// Manifest: "id:{data.id};request-id:{x-request-id};ts:{ts};"
+	// Skip when secret is empty (dev mode).
 	if h.cfg.MPWebhookSecret != "" {
 		xSig := c.GetHeader("x-signature")
-		v1 := ""
+		var ts, v1 string
 		for _, part := range strings.Split(xSig, ",") {
 			part = strings.TrimSpace(part)
-			if strings.HasPrefix(part, "v1=") {
-				v1 = strings.TrimPrefix(part, "v1=")
-				break
+			if kv := strings.SplitN(part, "=", 2); len(kv) == 2 {
+				switch kv[0] {
+				case "ts":
+					ts = kv[1]
+				case "v1":
+					v1 = kv[1]
+				}
 			}
 		}
+
+		// Parse data.id from raw body to build the manifest
+		var bodyData struct {
+			Data struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		json.Unmarshal(rawBody, &bodyData) //nolint:errcheck — parse best-effort; empty ID → manifest mismatch → reject
+
+		xRequestID := c.Request.Header.Get("x-request-id")
+		manifest := fmt.Sprintf("id:%s;request-id:%s;ts:%s;", bodyData.Data.ID, xRequestID, ts)
+
 		mac := hmac.New(sha256.New, []byte(h.cfg.MPWebhookSecret))
-		mac.Write(rawBody)
+		mac.Write([]byte(manifest))
 		expected := hex.EncodeToString(mac.Sum(nil))
-		if v1 == "" || v1 != expected {
+
+		// Use constant-time comparison to prevent timing attacks
+		if v1 == "" || !hmac.Equal([]byte(v1), []byte(expected)) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid signature"})
 			return
 		}
@@ -222,8 +245,12 @@ func (h *Handler) Subscribe(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"init_point": mpResp.InitPoint})
 }
 
+// Fix 4: MigrateBetaDiscounts targets paying beta customers (billing_status == "active"),
+// not the legacy "beta" status. This ensures only customers already converted to paid
+// subscriptions receive the tier migration.
+// TODO: Add Mercado Pago plan-swap API call here once the MP API endpoint is confirmed.
 func (h *Handler) MigrateBetaDiscounts(c *gin.Context) {
-	subs, err := h.vetclinicClient.QuerySubscriptions(c.Request.Context(), "beta50", "beta")
+	subs, err := h.vetclinicClient.QuerySubscriptions(c.Request.Context(), "beta50", "active")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

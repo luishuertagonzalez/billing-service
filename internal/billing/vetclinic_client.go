@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 )
+
+// ErrNotFound is returned by the VetclinicClient when a resource is not found (404).
+var ErrNotFound = errors.New("vetclinic: not found")
 
 // Subscription mirrors domain.Subscription from vetclinic-api (no shared package).
 type Subscription struct {
@@ -43,6 +47,8 @@ func NewVetclinicClient(baseURL, secret string) *VetclinicClient {
 	}
 }
 
+// do executes an HTTP request to vetclinic-api. A 404 response returns ErrNotFound;
+// callers that expect optional resources should handle it explicitly.
 func (c *VetclinicClient) do(ctx context.Context, method, path string, body interface{}, out interface{}) error {
 	var bodyBytes []byte
 	var err error
@@ -67,7 +73,7 @@ func (c *VetclinicClient) do(ctx context.Context, method, path string, body inte
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 404 {
-		return nil
+		return ErrNotFound
 	}
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("vetclinic-api returned %d for %s %s", resp.StatusCode, method, path)
@@ -78,9 +84,14 @@ func (c *VetclinicClient) do(ctx context.Context, method, path string, body inte
 	return nil
 }
 
+// GetSubscription fetches a subscription by ownerUID. Returns nil, nil when no subscription
+// document exists yet (404), which is expected for owners who onboarded before billing.
 func (c *VetclinicClient) GetSubscription(ctx context.Context, ownerUID string) (*Subscription, error) {
 	var sub Subscription
-	if err := c.do(ctx, http.MethodGet, "/internal/subscriptions/"+ownerUID, nil, &sub); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/internal/billing/subscriptions/"+ownerUID, nil, &sub); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	if sub.OwnerUID == "" {
@@ -90,25 +101,25 @@ func (c *VetclinicClient) GetSubscription(ctx context.Context, ownerUID string) 
 }
 
 func (c *VetclinicClient) UpdateSubscription(ctx context.Context, ownerUID string, fields map[string]interface{}) error {
-	return c.do(ctx, http.MethodPut, "/internal/subscriptions/"+ownerUID, fields, nil)
+	return c.do(ctx, http.MethodPut, "/internal/billing/subscriptions/"+ownerUID, fields, nil)
 }
 
 func (c *VetclinicClient) GetClinicsByOwnerUID(ctx context.Context, ownerUID string) ([]Clinic, error) {
 	var clinics []Clinic
-	if err := c.do(ctx, http.MethodGet, "/internal/clinics?owner_uid="+ownerUID, nil, &clinics); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/internal/billing/clinics?owner_uid="+ownerUID, nil, &clinics); err != nil {
 		return nil, err
 	}
 	return clinics, nil
 }
 
 func (c *VetclinicClient) UpdateClinicBillingStatus(ctx context.Context, clinicID, status string) error {
-	return c.do(ctx, http.MethodPut, "/internal/clinics/"+clinicID+"/billing-status",
+	return c.do(ctx, http.MethodPut, "/internal/billing/clinics/"+clinicID+"/billing-status",
 		map[string]string{"billing_status": status}, nil)
 }
 
 func (c *VetclinicClient) QuerySubscriptions(ctx context.Context, discountTier, billingStatus string) ([]Subscription, error) {
 	var subs []Subscription
-	path := fmt.Sprintf("/internal/subscriptions?discount_tier=%s&billing_status=%s", discountTier, billingStatus)
+	path := fmt.Sprintf("/internal/billing/subscriptions?discount_tier=%s&billing_status=%s", discountTier, billingStatus)
 	if err := c.do(ctx, http.MethodGet, path, nil, &subs); err != nil {
 		return nil, err
 	}

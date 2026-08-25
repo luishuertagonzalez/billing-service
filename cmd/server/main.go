@@ -12,6 +12,12 @@ import (
 func main() {
 	cfg := config.Load()
 
+	// Fix 6: Fail fast in non-development environments when INTERNAL_SECRET is not set.
+	// An empty secret would silently disable internal auth, allowing unauthenticated access.
+	if cfg.InternalSecret == "" && cfg.Env != "development" {
+		log.Fatal("INTERNAL_SECRET must be set in non-development environments")
+	}
+
 	if cfg.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -24,15 +30,20 @@ func main() {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+
 	if cfg.BillingEnabled {
 		billingHandler.RegisterRoutes(r)
 	} else {
-		// Register all billing paths as 503 when billing is disabled
+		// Fix 5: Always register /webhook as a 200 no-op even when billing is disabled.
+		// Mercado Pago will retry-storm the endpoint if it gets non-2xx responses,
+		// so we acknowledge silently instead of returning 503.
+		r.POST("/webhook", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"received": true})
+		})
+
+		// All other billing paths return 503 when billing is disabled.
 		billingGroup := r.Group("")
 		billingGroup.Any("/billing/*path", func(c *gin.Context) {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "billing not enabled"})
-		})
-		billingGroup.POST("/webhook", func(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "billing not enabled"})
 		})
 		billingGroup.Any("/internal/*path", func(c *gin.Context) {
