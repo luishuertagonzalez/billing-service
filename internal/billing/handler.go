@@ -1,8 +1,14 @@
 package billing
 
 import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -41,6 +47,35 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 }
 
 func (h *Handler) Webhook(c *gin.Context) {
+	// Read raw body before JSON parsing for HMAC verification
+	rawBody, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot read body"})
+		return
+	}
+	// Restore body for ShouldBindJSON
+	c.Request.Body = io.NopCloser(bytes.NewReader(rawBody))
+
+	// HMAC-SHA256 signature verification (skip in dev mode when secret is empty)
+	if h.cfg.MPWebhookSecret != "" {
+		xSig := c.GetHeader("x-signature")
+		v1 := ""
+		for _, part := range strings.Split(xSig, ",") {
+			part = strings.TrimSpace(part)
+			if strings.HasPrefix(part, "v1=") {
+				v1 = strings.TrimPrefix(part, "v1=")
+				break
+			}
+		}
+		mac := hmac.New(sha256.New, []byte(h.cfg.MPWebhookSecret))
+		mac.Write(rawBody)
+		expected := hex.EncodeToString(mac.Sum(nil))
+		if v1 == "" || v1 != expected {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid signature"})
+			return
+		}
+	}
+
 	var payload MPWebhookPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
