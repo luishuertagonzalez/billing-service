@@ -1,0 +1,46 @@
+# Trigger: push to main branch of billing-service repo
+substitutions:
+  _REGION: us-central1
+  _SERVICE: billing-service
+  _REPO: vetclinic-images
+
+steps:
+  # 1. Build
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_SERVICE:$COMMIT_SHA
+      - -t
+      - $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_SERVICE:latest
+      - .
+
+  # 2. Push
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_SERVICE
+
+  # 3. Deploy a Cloud Run
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - $_SERVICE
+      - --image=$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_SERVICE:$COMMIT_SHA
+      - --region=$_REGION
+      - --platform=managed
+      - --no-allow-unauthenticated
+      - --service-account=billing-service@$PROJECT_ID.iam.gserviceaccount.com
+      - --set-env-vars=^|^ENV=production|PORT=8084|VETCLINIC_API_URL=https://vetclinic-api-1076226176316.us-central1.run.app|BILLING_ENABLED=false
+      - --set-secrets=INTERNAL_SECRET=INTERNAL_SECRET:latest,MP_ACCESS_TOKEN=MP_ACCESS_TOKEN:latest,MP_WEBHOOK_SECRET=MP_WEBHOOK_SECRET:latest
+      - --quiet
+
+images:
+  - $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_SERVICE:$COMMIT_SHA
+  - $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_SERVICE:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY
