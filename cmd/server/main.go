@@ -18,6 +18,10 @@ func main() {
 		log.Fatal("INTERNAL_SECRET must be set in non-development environments")
 	}
 
+	if cfg.MPWebhookSecret == "" && cfg.Env != "development" {
+		log.Fatal("MP_WEBHOOK_SECRET must be set in non-development environments")
+	}
+
 	if cfg.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}

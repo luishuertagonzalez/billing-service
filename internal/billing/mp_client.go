@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const mpBaseURL = "https://api.mercadopago.com"
@@ -36,6 +38,7 @@ type MPPreapproval struct {
 	Status            string `json:"status"`
 	PreapprovalPlanID string `json:"preapproval_plan_id"`
 	ExternalReference string `json:"external_reference"`
+	NextPaymentDate   string `json:"next_payment_date,omitempty"` // ISO-8601
 }
 
 type MPClient struct {
@@ -61,6 +64,7 @@ func (c *MPClient) CreateSubscription(ctx context.Context, req MPSubscriptionReq
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.accessToken)
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-Idempotency-Key", uuid.New().String())
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {

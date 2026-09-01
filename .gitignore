@@ -1,0 +1,15 @@
+.env
+*.env.local
+*.env.*.local
+
+# Binaries
+billing-service
+/server
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store

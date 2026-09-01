@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,7 +31,8 @@ func NewHandler(cfg *config.Config, mpClient *MPClient, vc *VetclinicClient) *Ha
 
 func InternalAuthMiddleware(secret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.GetHeader("X-Internal-Secret") != secret {
+		got := c.GetHeader("X-Internal-Secret")
+		if subtle.ConstantTimeCompare([]byte(got), []byte(secret)) != 1 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
@@ -77,6 +80,13 @@ func (h *Handler) Webhook(c *gin.Context) {
 			}
 		}
 
+		// Validate timestamp window to prevent replay attacks
+		tsInt, err := strconv.ParseInt(ts, 10, 64)
+		if err != nil || abs(time.Now().Unix()-tsInt) > 300 {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "timestamp out of window"})
+			return
+		}
+
 		// Parse data.id from raw body to build the manifest
 		var bodyData struct {
 			Data struct {
@@ -104,6 +114,7 @@ func (h *Handler) Webhook(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	log.Printf("webhook: received action=%s data.id=%s", payload.Action, payload.Data.ID)
 
 	// Solo procesar eventos de actualización o cancelación
 	if payload.Action != "updated" && payload.Action != "cancelled" {
@@ -128,13 +139,29 @@ func (h *Handler) Webhook(c *gin.Context) {
 
 	billingStatus := mpStatusToBillingStatus(preapproval.Status)
 	fields := map[string]interface{}{
-		"billing_status": billingStatus,
-		"updated_at":     time.Now(),
+		"billing_status":         billingStatus,
+		"updated_at":             time.Now(),
+		"last_processed_event_id": payload.Data.ID,
 	}
 
 	// Revocar descuento beta solo en cancelación o expiración definitiva
 	if preapproval.Status == "cancelled" || preapproval.Status == "expired" {
 		fields["discount_tier"] = "revoked"
+	}
+
+	// Fix 8b: write current_period_end from next_payment_date
+	if preapproval.NextPaymentDate != "" {
+		if t, err := time.Parse(time.RFC3339, preapproval.NextPaymentDate); err == nil {
+			fields["current_period_end"] = t
+		}
+	}
+
+	// Dedup: skip if this event was already processed
+	currentSub, err := h.vetclinicClient.GetSubscription(c.Request.Context(), ownerUID)
+	if err == nil && currentSub != nil && currentSub.LastProcessedEventID == payload.Data.ID {
+		log.Printf("webhook: duplicate event %s for %s, skipping", payload.Data.ID, ownerUID)
+		c.JSON(http.StatusOK, gin.H{"received": true})
+		return
 	}
 
 	if err := h.vetclinicClient.UpdateSubscription(c.Request.Context(), ownerUID, fields); err != nil {
@@ -243,6 +270,13 @@ func (h *Handler) Subscribe(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"init_point": mpResp.InitPoint})
+}
+
+func abs(n int64) int64 {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 // Fix 4: MigrateBetaDiscounts targets paying beta customers (billing_status == "active"),

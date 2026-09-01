@@ -15,15 +15,16 @@ var ErrNotFound = errors.New("vetclinic: not found")
 
 // Subscription mirrors domain.Subscription from vetclinic-api (no shared package).
 type Subscription struct {
-	OwnerUID         string     `json:"owner_uid"`
-	BillingStatus    string     `json:"billing_status"`
-	DiscountTier     string     `json:"discount_tier"`
-	BetaParticipant  bool       `json:"beta_participant"`
-	MPSubscriptionID string     `json:"mp_subscription_id,omitempty"`
-	PlanID           string     `json:"plan_id,omitempty"`
-	CurrentPeriodEnd *time.Time `json:"current_period_end,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	OwnerUID             string     `json:"owner_uid"`
+	BillingStatus        string     `json:"billing_status"`
+	DiscountTier         string     `json:"discount_tier"`
+	BetaParticipant      bool       `json:"beta_participant"`
+	MPSubscriptionID     string     `json:"mp_subscription_id,omitempty"`
+	PlanID               string     `json:"plan_id,omitempty"`
+	CurrentPeriodEnd     *time.Time `json:"current_period_end,omitempty"`
+	LastProcessedEventID string     `json:"last_processed_event_id,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
 type Clinic struct {
