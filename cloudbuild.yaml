@@ -34,7 +34,7 @@ steps:
       - --platform=managed
       - --no-allow-unauthenticated
       - --service-account=billing-service@$PROJECT_ID.iam.gserviceaccount.com
-      - --set-env-vars=^|^ENV=production|PORT=8084|VETCLINIC_API_URL=https://vetclinic-api-1076226176316.us-central1.run.app|BILLING_ENABLED=false
+      - --set-env-vars=^|^ENV=production|VETCLINIC_API_URL=https://vetclinic-api-1076226176316.us-central1.run.app|BILLING_ENABLED=false
       - --set-secrets=INTERNAL_SECRET=INTERNAL_SECRET:latest,MP_ACCESS_TOKEN=MP_ACCESS_TOKEN:latest,MP_WEBHOOK_SECRET=MP_WEBHOOK_SECRET:latest
       - --quiet
 
