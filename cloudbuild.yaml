@@ -32,7 +32,7 @@ steps:
       - --image=$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_SERVICE:$COMMIT_SHA
       - --region=$_REGION
       - --platform=managed
-      - --no-allow-unauthenticated
+      - --allow-unauthenticated
       - --service-account=billing-service@$PROJECT_ID.iam.gserviceaccount.com
       - --set-env-vars=^|^ENV=production|VETCLINIC_API_URL=https://vetclinic-api-1076226176316.us-central1.run.app|BILLING_ENABLED=false
       - --set-secrets=INTERNAL_SECRET=INTERNAL_SECRET:latest,MP_ACCESS_TOKEN=MP_ACCESS_TOKEN:latest,MP_WEBHOOK_SECRET=MP_WEBHOOK_SECRET:latest
