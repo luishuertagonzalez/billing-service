@@ -48,6 +48,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	internal := r.Group("/", InternalAuthMiddleware(h.cfg.InternalSecret))
 	internal.GET("/billing/status/:ownerUID", h.GetBillingStatus)
 	internal.POST("/billing/subscribe", h.Subscribe)
+	internal.POST("/billing/checkout", h.CreateCheckout)
 	internal.POST("/internal/migrate-beta-discounts", h.MigrateBetaDiscounts)
 }
 
@@ -270,6 +271,61 @@ func (h *Handler) Subscribe(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"init_point": mpResp.InitPoint})
+}
+
+type CheckoutItem struct {
+	Title     string  `json:"title" binding:"required"`
+	Quantity  int     `json:"quantity" binding:"required"`
+	UnitPrice float64 `json:"unit_price" binding:"required"`
+}
+
+type CheckoutRequest struct {
+	OwnerUID string         `json:"owner_uid" binding:"required"`
+	Items    []CheckoutItem `json:"items" binding:"required"`
+	BackURL  string         `json:"back_url" binding:"required"`
+}
+
+func (h *Handler) CreateCheckout(c *gin.Context) {
+	var req CheckoutRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	items := make([]MPPreferenceItem, len(req.Items))
+	for i, item := range req.Items {
+		items[i] = MPPreferenceItem{
+			Title:     item.Title,
+			Quantity:  item.Quantity,
+			UnitPrice: item.UnitPrice,
+		}
+	}
+
+	pref, err := h.mpClient.CreatePreference(c.Request.Context(), MPPreferenceRequest{
+		Items: items,
+		BackURLs: MPBackURLs{
+			Success: req.BackURL + "?status=success",
+			Failure: req.BackURL + "?status=failure",
+			Pending: req.BackURL + "?status=pending",
+		},
+		ExternalReference: req.OwnerUID,
+	})
+	if err != nil {
+		log.Printf("checkout: failed to create preference for %s: %v", req.OwnerUID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create preference"})
+		return
+	}
+
+	// En sandbox usamos sandbox_init_point; en producción, init_point
+	initPoint := pref.InitPoint
+	if h.cfg.Env != "production" {
+		initPoint = pref.SandboxInitPoint
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"preference_id": pref.ID,
+		"init_point":    initPoint,
+	})
 }
 
 func abs(n int64) int64 {
